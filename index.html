@@ -1,154 +1,286 @@
-<script>
-  // HIER Backend-URL:
-  const BACKEND_URL = "https://example.com/api/claim";
-
-  const connectBtn = document.getElementById("connectBtn");
-  const claimBtn = document.getElementById("claimBtn");
-  const statusEl = document.getElementById("status");
-  const addressBox = document.getElementById("addressBox");
-  const networkEl = document.getElementById("network");
-
-  let currentAccount = null;
-
-  function setStatus(message, type = "info") {
-    statusEl.textContent = message;
-    statusEl.className = "";
-    if (type === "info") statusEl.classList.add("status-info");
-    if (type === "success") statusEl.classList.add("status-success");
-    if (type === "error") statusEl.classList.add("status-error");
-  }
-
-  function shortenAddress(addr) {
-    if (!addr) return "";
-    return addr.slice(0, 6) + "..." + addr.slice(-4);
-  }
-
-  // Debug: direkt beim Laden anzeigen, ob ein Provider da ist
-  if (!window.ethereum) {
-    networkEl.textContent = "Kein window.ethereum – kein Wallet-Provider im Kontext.";
-  } else {
-    networkEl.textContent = "Wallet-Provider gefunden (window.ethereum vorhanden).";
-  }
-
-  async function updateNetworkInfo() {
-    if (!window.ethereum) {
-      return;
-    }
-    try {
-      const chainId = await window.ethereum.request({ method: "eth_chainId" });
-      networkEl.innerHTML =
-        "Wallet-Provider gefunden · Chain ID: " +
-        chainId +
-        ' <span class="badge">Nutze diese Chain für deinen QR-Token</span>';
-    } catch (err) {
-      console.log("Fehler bei eth_chainId:", err);
-    }
-  }
-
-  async function connectWallet() {
-    if (!window.ethereum) {
-      setStatus("MetaMask nicht gefunden. Läuft die Seite sicher im MetaMask-Browser?", "error");
-      return;
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR Token Claim</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111827;
+      background: #f3f4f6;
     }
 
-    try {
-      setStatus("Step 1: connectWallet gestartet…", "info");
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-      // MetaMask Mobile: dieser Aufruf MUSS ein Popup/Sheet triggern
-      setStatus("Step 2: request eth_requestAccounts…", "info");
-      const accounts = await window.ethereum.request({
-        method: "eth_requestAccounts",
-      });
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.1),
+        0 4px 6px -4px rgba(0, 0, 0, 0.1);
+      padding: 24px;
+      max-width: 420px;
+      width: 100%;
+    }
 
-      setStatus("Step 3: Antwort von eth_requestAccounts erhalten.", "info");
+    h1 {
+      font-size: 1.5rem;
+      margin: 0 0 0.5rem 0;
+    }
 
-      if (!accounts || accounts.length === 0) {
-        setStatus("Keine Accounts erhalten.", "error");
+    p {
+      margin: 0.25rem 0;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 0.875rem;
+    }
+
+    .address-box {
+      margin-top: 12px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #f9fafb;
+      font-size: 0.85rem;
+      word-break: break-all;
+      border: 1px solid #e5e7eb;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border-radius: 9999px;
+      border: none;
+      padding: 8px 16px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button.primary {
+      background: #111827;
+      color: white;
+    }
+
+    button.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 16px;
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+
+    .status-info {
+      color: #2563eb;
+    }
+
+    .status-success {
+      color: #16a34a;
+    }
+
+    .status-error {
+      color: #dc2626;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      background: #eef2ff;
+      color: #4338ca;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>QR Token Claim</h1>
+    <p class="muted">
+      Verbinde deine Wallet und sende einen Claim. Die Transaktion wird von der
+      Owner-Wallet bezahlt – du brauchst kein Gas.
+    </p>
+
+    <div id="network" class="muted"></div>
+
+    <div id="addressBox" class="address-box" style="display: none;"></div>
+
+    <div class="buttons">
+      <button id="connectBtn" class="secondary">Wallet verbinden</button>
+      <button id="claimBtn" class="primary" disabled>Token claimen</button>
+    </div>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // HIER Backend-URL:
+    const BACKEND_URL = "https://example.com/api/claim";
+
+    const connectBtn = document.getElementById("connectBtn");
+    const claimBtn = document.getElementById("claimBtn");
+    const statusEl = document.getElementById("status");
+    const addressBox = document.getElementById("addressBox");
+    const networkEl = document.getElementById("network");
+
+    let currentAccount = null;
+
+    function setStatus(message, type = "info") {
+      statusEl.textContent = message;
+      statusEl.className = "";
+      if (type === "info") statusEl.classList.add("status-info");
+      if (type === "success") statusEl.classList.add("status-success");
+      if (type === "error") statusEl.classList.add("status-error");
+    }
+
+    function shortenAddress(addr) {
+      if (!addr) return "";
+      return addr.slice(0, 6) + "..." + addr.slice(-4);
+    }
+
+    async function updateNetworkInfo() {
+      if (!window.ethereum) {
+        networkEl.textContent = "Keine Wallet gefunden (MetaMask o. Ä. benötigt).";
+        return;
+      }
+      try {
+        const chainId = await window.ethereum.request({ method: "eth_chainId" });
+        networkEl.innerHTML =
+          "Chain ID: " +
+          chainId +
+          ' <span class="badge">Bitte die richtige Chain für deinen QR-Token nutzen</span>';
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        setStatus("MetaMask nicht gefunden. Bitte Wallet im Browser installieren.", "error");
         return;
       }
 
-      currentAccount = accounts[0];
-      addressBox.style.display = "block";
-      addressBox.textContent = "Verbunden: " + currentAccount;
-      claimBtn.disabled = false;
-      setStatus("Wallet verbunden: " + shortenAddress(currentAccount), "success");
+      try {
+        setStatus("Verbinde Wallet...", "info");
+        const accounts = await window.ethereum.request({
+          method: "eth_requestAccounts",
+        });
 
-      await updateNetworkInfo();
-    } catch (err) {
-      console.log("Fehler in connectWallet:", err);
-      // Auf Mobile hast du kein F12, deshalb alles in den Status schreiben
-      setStatus(
-        "Verbindung abgelehnt oder Fehler: " +
-          (err && (err.message || err.code || JSON.stringify(err))),
-        "error"
-      );
-    }
-  }
+        if (!accounts || accounts.length === 0) {
+          setStatus("Keine Accounts erhalten.", "error");
+          return;
+        }
 
-  async function sendClaim() {
-    if (!currentAccount) {
-      setStatus("Bitte zuerst Wallet verbinden.", "error");
-      return;
-    }
-    if (!BACKEND_URL || BACKEND_URL.includes("DEIN-BACKEND-HIER")) {
-      setStatus("BACKEND_URL ist noch nicht konfiguriert.", "error");
-      return;
-    }
-
-    claimBtn.disabled = true;
-    setStatus("Sende Claim an Backend…", "info");
-
-    try {
-      const res = await fetch(BACKEND_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: currentAccount }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const msg =
-          data && data.error
-            ? data.error
-            : "Fehler beim Claim (HTTP " + res.status + ")";
-        setStatus(msg, "error");
-        claimBtn.disabled = false;
-        return;
-      }
-
-      const hashText = data.txHash ? " Tx Hash: " + data.txHash : "";
-      setStatus("Claim erfolgreich gesendet." + hashText, "success");
-      claimBtn.disabled = true;
-    } catch (err) {
-      setStatus("Netzwerk-/Backendfehler: " + (err.message || "Unbekannt"), "error");
-      claimBtn.disabled = false;
-    }
-  }
-
-  connectBtn.addEventListener("click", connectWallet);
-  claimBtn.addEventListener("click", sendClaim);
-
-  updateNetworkInfo();
-
-  if (window.ethereum) {
-    window.ethereum.on("accountsChanged", (accounts) => {
-      if (!accounts || accounts.length === 0) {
-        currentAccount = null;
-        addressBox.style.display = "none";
-        claimBtn.disabled = true;
-        setStatus("Wallet getrennt.", "info");
-      } else {
         currentAccount = accounts[0];
         addressBox.style.display = "block";
         addressBox.textContent = "Verbunden: " + currentAccount;
         claimBtn.disabled = false;
-        setStatus("Wallet gewechselt: " + shortenAddress(currentAccount), "info");
-      }
-    });
+        setStatus("Wallet verbunden: " + shortenAddress(currentAccount), "success");
 
-    window.ethereum.on("chainChanged", () => {
-      updateNetworkInfo();
-    });
-  }
-</script>
+        await updateNetworkInfo();
+      } catch (err) {
+        console.error(err);
+        setStatus("Verbindung abgelehnt oder Fehler: " + (err.message || "Unbekannt"), "error");
+      }
+    }
+
+    async function sendClaim() {
+      if (!currentAccount) {
+        setStatus("Bitte zuerst Wallet verbinden.", "error");
+        return;
+      }
+      if (!BACKEND_URL || BACKEND_URL.includes("DEIN-BACKEND-HIER")) {
+        setStatus("BACKEND_URL ist noch nicht konfiguriert.", "error");
+        return;
+      }
+
+      claimBtn.disabled = true;
+      setStatus("Sende Claim an Backend...", "info");
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: currentAccount }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const msg =
+            data && data.error
+              ? data.error
+              : "Fehler beim Claim (HTTP " + res.status + ")";
+          setStatus(msg, "error");
+          claimBtn.disabled = false; // evtl. nochmal versuchen
+          return;
+        }
+
+        const hashText = data.txHash
+          ? " Tx Hash: " + data.txHash
+          : "";
+
+        setStatus("Claim erfolgreich gesendet." + hashText, "success");
+        // optional: Claim-Button dauerhaft deaktivieren
+        claimBtn.disabled = true;
+      } catch (err) {
+        console.error(err);
+        setStatus("Netzwerk-/Backendfehler: " + (err.message || "Unbekannt"), "error");
+        claimBtn.disabled = false;
+      }
+    }
+
+    connectBtn.addEventListener("click", connectWallet);
+    claimBtn.addEventListener("click", sendClaim);
+
+    // Bei Laden der Seite versuchen, Netzwerkinfo zu holen
+    updateNetworkInfo();
+
+    // Optional: auf Account-/Netzwerkwechsel reagieren
+    if (window.ethereum) {
+      window.ethereum.on("accountsChanged", (accounts) => {
+        if (!accounts || accounts.length === 0) {
+          currentAccount = null;
+          addressBox.style.display = "none";
+          claimBtn.disabled = true;
+          setStatus("Wallet getrennt.", "info");
+        } else {
+          currentAccount = accounts[0];
+          addressBox.style.display = "block";
+          addressBox.textContent = "Verbunden: " + currentAccount;
+          claimBtn.disabled = false;
+          setStatus("Wallet gewechselt: " + shortenAddress(currentAccount), "info");
+        }
+      });
+
+      window.ethereum.on("chainChanged", () => {
+        updateNetworkInfo();
+      });
+    }
+  </script>
+</body>
+</html>
